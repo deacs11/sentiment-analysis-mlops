@@ -1,9 +1,7 @@
  # tests/test_model.py
 import unittest
 import os
-# Ci assicuriamo che il test possa trovare il codice nell'altra cartella (app/)
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 from app.model import SentimentModel
 
