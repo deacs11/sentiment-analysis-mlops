@@ -1,1 +1,134 @@
- 
+ // jenkins/Jenkinsfile
+pipeline {
+    // Definiamo l'agente che eseguirà la pipeline. 
+    // 'any' significa che Jenkins può usare qualsiasi agente disponibile.
+    agent any
+
+    // Definiamo le variabili d'ambiente che useremo nella pipeline.
+    environment {
+        // Il nome che daremo alla nostra immagine Docker.
+        DOCKER_IMAGE_NAME = 'sentiment-analysis-api'
+        // L'ID utente di Docker Hub (o un altro registry). Sostituiscilo con il tuo!
+        DOCKER_HUB_USERNAME = 'tuo-username-dockerhub' 
+        // L'ID delle credenziali che configureremo in Jenkins per l'accesso a Docker Hub.
+        DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
+    }
+
+    // La pipeline è divisa in "stage" (fasi). Se una fase fallisce, l'intera pipeline si ferma.
+    stages {
+
+        // Fase 1: Checkout del Codice
+        // Jenkins clona il codice dal repository Git.
+        stage('Checkout') {
+            steps {
+                script {
+                    echo '1. Clonazione del repository...'
+                    // Questo comando (git) è implicito quando si usa Jenkins con un repository.
+                    // Jenkins lo fa in automatico.
+                    echo 'Checkout completato.'
+                }
+            }
+        }
+
+        // Fase 2: Build dell'Immagine Docker
+        // Usiamo il nostro Dockerfile per creare l'immagine dell'applicazione.
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo '2. Costruzione dell'immagine Docker...'
+                    // Costruiamo l'immagine e le diamo un tag con il numero della build di Jenkins.
+                    // Questo ci permette di tracciare ogni versione.
+                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
+                    echo "Immagine ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} costruita con successo."
+                }
+            }
+        }
+
+        // Fase 3: Esecuzione degli Unit Test
+        // Eseguiamo i test che non richiedono l'avvio dell'API (quelli in test_model.py).
+        stage('Run Unit Tests') {
+            steps {
+                script {
+                    echo '3. Esecuzione degli Unit Test...'
+                    // Avviamo un container temporaneo dalla nostra immagine e lanciamo i test al suo interno.
+                    // Il flag --rm lo rimuove automaticamente dopo l'esecuzione.
+                    sh "docker run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
+                    echo 'Unit Test completati con successo.'
+                }
+            }
+        }
+
+        // Fase 4: Esecuzione degli Integration Test
+        // Questi test richiedono che l'API sia in esecuzione.
+        stage('Run Integration Tests') {
+            steps {
+                script {
+                    echo '4. Esecuzione degli Integration Test...'
+                    // Usiamo un blocco 'try...finally' per assicurarci di fermare e rimuovere
+                    // il container di test anche se i test falliscono.
+                    try {
+                        // Avviamo il container dell'API in background (-d) e lo chiamiamo 'test-api-container'.
+                        sh "docker run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        
+                        // Diamo all'API qualche secondo per avviarsi.
+                        echo 'In attesa che l\'API si avvii...'
+                        sleep 10
+                        
+                        // Avviamo un altro container (dalla stessa immagine) che esegue i test
+                        // e si collega alla rete del "host" per poter raggiungere localhost:5000.
+                        sh "docker run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
+                        echo 'Integration Test completati con successo.'
+                    } finally {
+                        // Questo blocco viene eseguito sempre, sia in caso di successo che di fallimento.
+                        echo 'Pulizia del container di test...'
+                        // Fermiamo e rimuoviamo il container dell'API.
+                        sh "docker stop test-api-container"
+                        sh "docker rm test-api-container"
+                    }
+                }
+            }
+        }
+        
+        // Fase 5 (Opzionale, ma consigliata): Push dell'Immagine su un Registry
+        // Se i test passano, pubblichiamo l'immagine su Docker Hub per renderla disponibile per il deploy.
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    echo '5. Pubblicazione dell'immagine su Docker Hub...'
+                    // Diamo un tag all'immagine con il nostro username di Docker Hub.
+                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                    
+                    // Usiamo le credenziali configurate in Jenkins per fare il login e il push.
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", passwordVariable: 'DOCKER_HUB_PASSWORD', usernameVariable: 'DOCKER_HUB_USERNAME')]) {
+                        sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
+                        sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                    }
+                    echo 'Immagine pubblicata con successo.'
+                }
+            }
+        }
+    }
+
+    // Sezione 'post': Azioni da eseguire alla fine della pipeline.
+    post {
+        // Eseguito sempre, indipendentemente dal risultato.
+        always {
+            echo 'Pipeline terminata.'
+            // Puliamo il workspace di Jenkins.
+            cleanWs()
+            // Eseguiamo il logout da Docker Hub.
+            sh "docker logout"
+        }
+        // Eseguito solo se la pipeline ha successo.
+        success {
+            echo 'La pipeline è stata completata con successo!'
+            // Qui potresti aggiungere notifiche (es. Slack, email).
+        }
+        // Eseguito solo se la pipeline fallisce.
+        failure {
+            echo 'La pipeline è fallita.'
+        }
+    }
+}
