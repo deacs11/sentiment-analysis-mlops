@@ -15,6 +15,8 @@ pipeline {
         DOCKER_IMAGE_NAME = 'sentiment-analysis-api'
         DOCKER_HUB_USERNAME = 'jorio97'
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
+        // Definiamo una variabile che punta al percorso esatto di Docker dentro i container Linux.
+        DOCKER_CMD = '/usr/bin/docker'
     }
 
     stages {
@@ -34,7 +36,7 @@ pipeline {
                 script {
                     echo "2. Costruzione dell'immagine Docker..."
                     // Ora usiamo 'sh' perché siamo dentro un container Linux!
-                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
+                    sh "${DOCKER_CMD} build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
                 }
             }
         }
@@ -45,7 +47,7 @@ pipeline {
                 script {
                     echo "3. Esecuzione degli Unit Test..."
                     // Usiamo 'sh'
-                    sh "docker run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
+                    sh "${DOCKER_CMD} run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
                 }
             }
         }
@@ -57,16 +59,16 @@ pipeline {
                     echo "4. Esecuzione degli Integration Test..."
                     try {
                         // Usiamo 'sh'
-                        sh "docker run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        sh "${DOCKER_CMD} run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
                         echo "In attesa che l'API si avvii..."
                         sleep 10
                         // Usiamo 'sh'
-                        sh "docker run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
+                        sh "${DOCKER_CMD} run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
                     } finally {
                         echo "Pulizia del container di test..."
                         // Usiamo 'sh'
-                        sh "docker stop test-api-container"
-                        sh "docker rm test-api-container"
+                        sh "${DOCKER_CMD} stop test-api-container"
+                        sh "${DOCKER_CMD} rm test-api-container"
                     }
                 }
             }
@@ -78,14 +80,14 @@ pipeline {
                 script {
                     echo "5. Pubblicazione dell'immagine su Docker Hub..."
                     // Usiamo 'sh'
-                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                    sh "${DOCKER_CMD} tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    sh "${DOCKER_CMD} tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
                     
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", passwordVariable: 'DOCKER_HUB_PASSWORD', usernameVariable: 'DOCKER_HUB_USERNAME')]) {
                         // Usiamo 'sh'
                         sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
-                        sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                        sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                        sh "${DOCKER_CMD} push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        sh "${DOCKER_CMD} push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
                     }
                 }
             }
@@ -96,7 +98,7 @@ pipeline {
         always {
             echo "Pipeline terminata."
             // Usiamo 'sh'
-            sh "docker logout"
+            sh "${DOCKER_CMD} logout"
             cleanWs()
         }
         success {
