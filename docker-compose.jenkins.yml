@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   jenkins:
-    image: jenkins/jenkins:2.414.3-jdk17 # Usiamo un'immagine ufficiale e stabile
+    image: jenkins/jenkins:latest
     container_name: jenkins
     restart: unless-stopped
     user: root
