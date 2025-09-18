@@ -1,18 +1,18 @@
+# docker-compose.jenkins.yml - VERSIONE FINALE
 version: '3.8'
 services:
   jenkins:
-    image: jenkins/jenkins:latest
+    build:
+      context: .
+      dockerfile: jenkins-docker/Dockerfile
     container_name: jenkins
     restart: unless-stopped
-    user: root
     ports:
       - "8080:8080"
       - "50000:50000"
     volumes:
       - ./jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
-      # Aggiungiamo il client Docker direttamente come volume
-      - /usr/bin/docker:/usr/bin/docker
 
 volumes:
   jenkins_home:
