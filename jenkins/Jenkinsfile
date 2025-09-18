@@ -38,6 +38,7 @@ pipeline {
                     echo "2. Costruzione dell'immagine Docker..."
                     // Costruiamo l'immagine e le diamo un tag con il numero della build di Jenkins.
                     // Questo ci permette di tracciare ogni versione.
+                    bat "docker context use desktop-linux"
                     bat "docker build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
                     echo "Immagine ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} costruita con successo."
                 }
@@ -52,6 +53,7 @@ pipeline {
                     echo "3. Esecuzione degli Unit Test..."
                     // Avviamo un container temporaneo dalla nostra immagine e lanciamo i test al suo interno.
                     // Il flag --rm lo rimuove automaticamente dopo l'esecuzione.
+                    bat "docker context use desktop-linux"
                     bat "docker run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
                     echo "Unit Test completati con successo."
                 }
@@ -68,6 +70,7 @@ pipeline {
                     // il container di test anche se i test falliscono.
                     try {
                         // Avviamo il container dell'API in background (-d) e lo chiamiamo 'test-api-container'.
+                        bat "docker context use desktop-linux"
                         bat "docker run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
                         
                         // Diamo all'API qualche secondo per avviarsi.
@@ -76,13 +79,16 @@ pipeline {
                         
                         // Avviamo un altro container (dalla stessa immagine) che esegue i test
                         // e si collega alla rete del "host" per poter raggiungere localhost:5000.
+                        bat "docker context use desktop-linux"
                         bat "docker run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
                         echo "Integration Test completati con successo."
                     } finally {
                         // Questo blocco viene eseguito sempre, sia in caso di successo che di fallimento.
                         echo "Pulizia del container di test..."
                         // Fermiamo e rimuoviamo il container dell'API.
+                        bat "docker context use desktop-linux"
                         bat "docker stop test-api-container"
+                        bat "docker context use desktop-linux"
                         bat "docker rm test-api-container"
                     }
                 }
@@ -96,13 +102,18 @@ pipeline {
                 script {
                     echo "5. Pubblicazione dell'immagine su Docker Hub..."
                     // Diamo un tag all'immagine con il nostro username di Docker Hub.
+                    bat "docker context use desktop-linux"
                     bat "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    bat "docker context use desktop-linux"
                     bat "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
                     
                     // Usiamo le credenziali configurate in Jenkins per fare il login e il push.
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", passwordVariable: 'DOCKER_HUB_PASSWORD', usernameVariable: 'DOCKER_HUB_USERNAME')]) {
+                        bat "docker context use desktop-linux"
                         bat "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
+                        bat "docker context use desktop-linux"
                         bat "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        bat "docker context use desktop-linux"
                         bat "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
                     }
                     echo "Immagine pubblicata con successo."
@@ -119,6 +130,7 @@ pipeline {
             // Puliamo il workspace di Jenkins.
             cleanWs()
             // Eseguiamo il logout da Docker Hub.
+            bat "docker context use desktop-linux"
             bat "docker logout"
         }
         // Eseguito solo se la pipeline ha successo.
