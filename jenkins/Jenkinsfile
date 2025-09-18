@@ -1,54 +1,43 @@
 pipeline {
-    // --- MODIFICA CHIAVE ---
-    // Invece di 'agent any', specifichiamo un agente Docker.
-    // Questo dice a Jenkins di avviare un container Docker e di eseguire la pipeline al suo interno.
-    agent {
-        docker {
-            // Usiamo un'immagine che contiene sia gli strumenti Docker che Git.
-            image 'docker:20.10.21-git'
-            // Questo permette al container di usare il "motore" Docker del tuo computer host (Docker-in-Docker).
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    // Usiamo 'agent any' perché la nostra istanza di Jenkins (che gira in Docker)
+    // ha già accesso al client e al motore Docker del computer host.
+    agent any
 
     environment {
         DOCKER_IMAGE_NAME = 'sentiment-analysis-api'
         DOCKER_HUB_USERNAME = 'jorio97'
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
-        // Definiamo una variabile che punta al percorso esatto di Docker dentro i container Linux.
-        DOCKER_CMD = '/usr/bin/docker'
     }
 
     stages {
-        // Fase 1: Checkout (implicito, ma possiamo lasciarlo per chiarezza)
+
+        // Fase 1: Checkout del Codice dal Repository
         stage('Checkout') {
             steps {
-                script {
-                    echo "1. Checkout del codice..."
-                    checkout scm // Questo comando esegue il checkout
-                }
+                // Questo comando clona o aggiorna il codice dal repository Git
+                // configurato nel job di Jenkins.
+                checkout scm
+                echo "1. Checkout completato."
             }
         }
 
         // Fase 2: Build dell'Immagine Docker
         stage('Build Docker Image') {
             steps {
-                script {
-                    echo "2. Costruzione dell'immagine Docker..."
-                    // Ora usiamo 'sh' perché siamo dentro un container Linux!
-                    sh "${DOCKER_CMD} build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
-                }
+                echo "2. Costruzione dell'immagine Docker..."
+                // Usiamo 'sh' perché il container di Jenkins è basato su Linux.
+                // Il comando 'docker' è disponibile grazie al volume mapping nel docker-compose.
+                sh "docker build -t ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} -f docker/Dockerfile ."
+                echo "Immagine ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} costruita."
             }
         }
-
+        
         // Fase 3: Esecuzione degli Unit Test
         stage('Run Unit Tests') {
             steps {
-                script {
-                    echo "3. Esecuzione degli Unit Test..."
-                    // Usiamo 'sh'
-                    sh "${DOCKER_CMD} run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
-                }
+                echo "3. Esecuzione degli Unit Test..."
+                sh "docker run --rm ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest discover tests"
+                echo "Unit Test superati."
             }
         }
 
@@ -58,47 +47,45 @@ pipeline {
                 script {
                     echo "4. Esecuzione degli Integration Test..."
                     try {
-                        // Usiamo 'sh'
-                        sh "${DOCKER_CMD} run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                        echo "In attesa che l'API si avvii..."
+                        sh "docker run -d --name test-api-container -p 5000:5000 ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                        echo "In attesa che l'API si avvii (10 secondi)..."
                         sleep 10
-                        // Usiamo 'sh'
-                        sh "${DOCKER_CMD} run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
+                        sh "docker run --rm --network host ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} python -m unittest tests/test_api.py"
+                        echo "Integration Test superati."
                     } finally {
                         echo "Pulizia del container di test..."
-                        // Usiamo 'sh'
-                        sh "${DOCKER_CMD} stop test-api-container"
-                        sh "${DOCKER_CMD} rm test-api-container"
+                        // Usiamo '|| true' per non far fallire la pipeline se il container non esiste
+                        sh "docker stop test-api-container || true"
+                        sh "docker rm test-api-container || true"
                     }
                 }
             }
         }
         
-        // Fase 5: Push dell'Immagine su un Registry
+        // Fase 5: Push dell'Immagine su Docker Hub
         stage('Push to Docker Hub') {
             steps {
-                script {
-                    echo "5. Pubblicazione dell'immagine su Docker Hub..."
-                    // Usiamo 'sh'
-                    sh "${DOCKER_CMD} tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                    sh "${DOCKER_CMD} tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                echo "5. Pubblicazione dell'immagine su Docker Hub..."
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", passwordVariable: 'DOCKER_HUB_PASSWORD', usernameVariable: 'DOCKER_HUB_USERNAME')]) {
+                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    sh "docker tag ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER} ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
                     
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", passwordVariable: 'DOCKER_HUB_PASSWORD', usernameVariable: 'DOCKER_HUB_USERNAME')]) {
-                        // Usiamo 'sh'
-                        sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
-                        sh "${DOCKER_CMD} push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                        sh "${DOCKER_CMD} push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
-                    }
+                    sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
+                    
+                    sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    sh "docker push ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest"
+                    echo "Immagine pubblicata con successo."
                 }
             }
         }
     }
 
+    // Azioni da eseguire alla fine della pipeline
     post {
         always {
-            echo "Pipeline terminata."
-            // Usiamo 'sh'
-            sh "${DOCKER_CMD} logout"
+            echo "Pipeline terminata. Eseguo pulizia."
+            sh "docker logout"
+            // cleanWs() pulisce il workspace di Jenkins per la prossima build.
             cleanWs()
         }
         success {
