@@ -14,6 +14,9 @@ RUN echo \
 RUN apt-get update && apt-get install -y docker-ce-cli
 
 # --- PASSAGGIO CHIAVE ---
+
+    # 1. Creiamo il gruppo 'docker' se non esiste. Usiamo un GID fisso (es. 999) per coerenza.
+RUN groupadd -g 999 docker
 # Aggiungiamo l'utente 'jenkins' al gruppo 'docker' per dargli i permessi
 # sul docker.sock montato.
 RUN usermod -aG docker jenkins
